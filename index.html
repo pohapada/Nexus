@@ -5,7 +5,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
 <meta content="#090d16" name="theme-color"/>
-<title>NEXUS &mdash; Secure Toolkit v1.26</title>
+<title>NEXUS &mdash; Secure Toolkit v1.30</title>
 <script>
 /*
  * NEXUS 1.25 — Load the optional Telegram WebApp SDK asynchronously.
@@ -1512,6 +1512,37 @@
   }
   html.tg-mini-app .main{
     padding-top:calc(var(--nexus-brand-row-top) + 52px) !important;
+  }
+}
+</style>
+
+
+<style id="nexus-v127-keyboard-aware-chat">
+/* NEXUS 1.27 — keep the chat composer above the on-screen keyboard.
+   The bottom dock is hidden while a chat field is being edited; the chat shell
+   is resized to the Visual Viewport so its composer remains in the visible area. */
+@media (max-width:760px){
+  body.nexus-chat-input-focused .mobile-nav{
+    display:none !important;
+  }
+  body.nexus-chat-input-focused .app{
+    padding-bottom:12px !important;
+  }
+  body.nexus-chat-input-focused .main{
+    padding-bottom:8px !important;
+  }
+  body.nexus-chat-input-focused #nexus-chat{
+    height:var(--nexus-chat-available-height,calc(100dvh - 180px)) !important;
+    min-height:180px !important;
+    max-height:none !important;
+    transition:none !important;
+  }
+  body.nexus-chat-input-focused #nexus-chat .chat-log{
+    min-height:0 !important;
+    max-height:none !important;
+    flex:1 1 0 !important;
+    overflow-y:auto !important;
+    overscroll-behavior:contain;
   }
 }
 </style>
@@ -3101,4 +3132,137 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeChatFontPanel()
 renderChatLabels();
 
 </script>
+
+<script id="nexus-v127-keyboard-aware-chat-script">
+(function nexusKeyboardAwareChat(){
+  'use strict';
+  const chat = document.getElementById('nexus-chat');
+  const nav = document.querySelector('.mobile-nav');
+  const fields = ['chat-compose','chat-key']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  if (!chat || !nav || !fields.length) return;
+
+  const body = document.body;
+  const visual = window.visualViewport || null;
+  let syncTimer = 0;
+  let blurTimer = 0;
+  let focusStartedAt = 0;
+  let keyboardWasDetected = false;
+  let wasNearBottom = false;
+
+  const isMobileWidth = () => window.matchMedia('(max-width: 760px)').matches;
+  const activeChatField = () => fields.includes(document.activeElement);
+
+  function keyboardIsVisible(){
+    const layoutHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+    const visibleHeight = visual && Number.isFinite(visual.height) ? visual.height : layoutHeight;
+    const visibleOffsetTop = visual && Number.isFinite(visual.offsetTop) ? visual.offsetTop : 0;
+    const occludedHeight = layoutHeight - (visibleHeight + visibleOffsetTop);
+    const screenHeight = Math.max(Number(window.screen && window.screen.height) || 0, layoutHeight);
+    const viewportWasResized = layoutHeight < screenHeight * 0.78 && visibleHeight < screenHeight * 0.78;
+    const viewportSaysKeyboardOpen = occludedHeight > 100 || viewportWasResized;
+    if (viewportSaysKeyboardOpen) {
+      keyboardWasDetected = true;
+      return true;
+    }
+    // Once the keyboard has been seen, trust the viewport when Android hides it
+    // with the Back button even if the text field remains focused.
+    if (keyboardWasDetected) return false;
+    const openingGrace = focusStartedAt > 0 && Date.now() - focusStartedAt < 800;
+    return openingGrace;
+  }
+
+  function applyVisibleChatHeight(){
+    if (!isMobileWidth() || !activeChatField() || !keyboardIsVisible()) {
+      clearEditingState();
+      return;
+    }
+
+    const log = document.getElementById('chat-log');
+    if (log) {
+      wasNearBottom = (log.scrollHeight - log.scrollTop - log.clientHeight) < 64;
+    }
+
+    // getBoundingClientRect() is relative to the layout viewport; offsetTop
+    // maps the visible viewport back into that coordinate space when Android
+    // pans the WebView to keep the focused field visible.
+    const visibleHeight = visual && Number.isFinite(visual.height)
+      ? visual.height : window.innerHeight;
+    const visibleOffsetTop = visual && Number.isFinite(visual.offsetTop)
+      ? visual.offsetTop : 0;
+    const chatTop = chat.getBoundingClientRect().top;
+    const available = Math.max(180, Math.floor(visibleHeight + visibleOffsetTop - chatTop - 8));
+
+    body.style.setProperty('--nexus-chat-available-height', available + 'px');
+    body.classList.add('nexus-chat-input-focused');
+
+    if (wasNearBottom && log) {
+      setTimeout(() => { log.scrollTop = log.scrollHeight; }, 30);
+    }
+  }
+
+  function scheduleSync(){
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      syncTimer = 0;
+      if (activeChatField()) applyVisibleChatHeight();
+      else clearEditingState();
+    }, 20);
+  }
+
+  function clearEditingState(){
+    body.classList.remove('nexus-chat-input-focused');
+    body.style.removeProperty('--nexus-chat-available-height');
+    if (!activeChatField()) {
+      focusStartedAt = 0;
+      keyboardWasDetected = false;
+    }
+  }
+
+  fields.forEach(field => {
+    field.addEventListener('focus', () => {
+      clearTimeout(blurTimer);
+      focusStartedAt = Date.now();
+      body.classList.add('nexus-chat-input-focused');
+      // Run after the first focus layout and again as the keyboard animates in.
+      scheduleSync();
+      setTimeout(scheduleSync, 90);
+      setTimeout(scheduleSync, 260);
+      setTimeout(scheduleSync, 420);
+      setTimeout(scheduleSync, 760);
+    });
+    field.addEventListener('blur', () => {
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => {
+        if (!activeChatField()) clearEditingState();
+      }, 140);
+    });
+  });
+
+  if (visual) {
+    visual.addEventListener('resize', scheduleSync, {passive:true});
+    visual.addEventListener('scroll', scheduleSync, {passive:true});
+  }
+  window.addEventListener('resize', scheduleSync, {passive:true});
+  window.addEventListener('orientationchange', () => setTimeout(scheduleSync, 180), {passive:true});
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') scheduleSync();
+  });
+
+  // Telegram reports viewport changes separately in some Android WebView builds.
+  const webApp = window.Telegram && window.Telegram.WebApp;
+  if (webApp && typeof webApp.onEvent === 'function') {
+    try { webApp.onEvent('viewportChanged', scheduleSync); } catch (_) {}
+  }
+
+  document.addEventListener('focusin', event => {
+    if (fields.includes(event.target)) scheduleSync();
+  });
+  document.addEventListener('focusout', () => {
+    setTimeout(() => { if (!activeChatField()) clearEditingState(); }, 160);
+  });
+})();
+</script>
+
 </body></html>
