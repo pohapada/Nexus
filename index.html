@@ -5,7 +5,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
 <meta content="#090d16" name="theme-color"/>
-<title>NEXUS &mdash; Secure Toolkit v1.30</title>
+<title>NEXUS &mdash; Secure Toolkit v1.31</title>
 <script>
 /*
  * NEXUS 1.25 — Load the optional Telegram WebApp SDK asynchronously.
@@ -15,6 +15,8 @@
 (function bootstrapNexusTelegram(){
   const root = document.documentElement;
   let connected = false;
+  let fullscreenRequested = false;
+  let fallbackExpanded = false;
   const toPx = value => `${Math.max(0, Number(value) || 0)}px`;
 
   function connectTelegramSafeArea(){
@@ -25,17 +27,60 @@
       const safe = webApp.safeAreaInset || {};
       const content = webApp.contentSafeAreaInset || {};
       root.style.setProperty('--nexus-tg-safe-top', toPx(safe.top));
+      root.style.setProperty('--nexus-tg-safe-bottom', toPx(safe.bottom));
+      root.style.setProperty('--nexus-tg-safe-left', toPx(safe.left));
+      root.style.setProperty('--nexus-tg-safe-right', toPx(safe.right));
       root.style.setProperty('--nexus-tg-content-top', toPx(content.top));
+      root.style.setProperty('--nexus-tg-content-bottom', toPx(content.bottom));
+      root.style.setProperty('--nexus-tg-content-left', toPx(content.left));
+      root.style.setProperty('--nexus-tg-content-right', toPx(content.right));
       root.classList.add('tg-mini-app');
+      root.classList.toggle('tg-fullscreen', !!webApp.isFullscreen);
+    };
+
+    const expandFallback = () => {
+      if (fallbackExpanded || typeof webApp.expand !== 'function') return;
+      fallbackExpanded = true;
+      try { webApp.expand(); } catch (_) { /* Keep the app usable at its current size. */ }
+    };
+
+    const requestFullscreenOnce = () => {
+      if (fullscreenRequested || webApp.isFullscreen) return;
+      fullscreenRequested = true;
+      if (typeof webApp.requestFullscreen === 'function') {
+        try {
+          webApp.requestFullscreen();
+        } catch (_) {
+          expandFallback();
+        }
+      } else {
+        // Older Telegram clients do not expose fullscreen mode; maximize instead.
+        expandFallback();
+      }
     };
 
     syncInsets();
-    if (!connected && typeof webApp.onEvent === 'function') {
-      ['safeAreaChanged','contentSafeAreaChanged','fullscreenChanged','viewportChanged'].forEach(eventName => {
-        try { webApp.onEvent(eventName, syncInsets); } catch (_) {}
-      });
+    if (!connected) {
+      if (typeof webApp.onEvent === 'function') {
+        ['safeAreaChanged','contentSafeAreaChanged','fullscreenChanged','viewportChanged'].forEach(eventName => {
+          try { webApp.onEvent(eventName, syncInsets); } catch (_) {}
+        });
+        try {
+          webApp.onEvent('fullscreenFailed', event => {
+            // UNSUPPORTED is the documented failure on clients without fullscreen support.
+            if (event && event.error === 'UNSUPPORTED') expandFallback();
+            syncInsets();
+          });
+        } catch (_) {}
+      }
+      connected = true;
     }
-    connected = true;
+
+    // ready() is the Mini App lifecycle signal; the fullscreen request is attempted
+    // once and the fullscreenChanged event remains the source of truth for layout.
+    try { if (typeof webApp.ready === 'function') webApp.ready(); } catch (_) {}
+    try { if (typeof webApp.setHeaderColor === 'function') webApp.setHeaderColor('#090d16'); } catch (_) {}
+    requestFullscreenOnce();
     return true;
   }
 
@@ -1543,6 +1588,19 @@
     flex:1 1 0 !important;
     overflow-y:auto !important;
     overscroll-behavior:contain;
+  }
+}
+</style>
+
+
+<style id="nexus-v131-telegram-fullscreen-support">
+/* NEXUS 1.31 — request Telegram fullscreen and respect device insets in that mode. */
+@media (max-width:760px){
+  html.tg-fullscreen .mobile-nav{
+    bottom:calc(8px + max(env(safe-area-inset-bottom,0px),var(--nexus-tg-safe-bottom,0px))) !important;
+  }
+  html.tg-fullscreen .app{
+    padding-bottom:calc(81px + max(env(safe-area-inset-bottom,0px),var(--nexus-tg-safe-bottom,0px))) !important;
   }
 }
 </style>
